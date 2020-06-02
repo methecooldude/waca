@@ -28,12 +28,14 @@ abstract class LoginCredentialPageBase extends InternalPageBase
         'totp'       => 'otp',
         'scratch'    => 'otp',
         'u2f'        => 'u2f',
+        'webauthn'   => 'webauthn'
     );
     protected $names = array(
         'yubikeyotp' => 'Yubikey OTP',
         'totp'       => 'TOTP (phone code generator)',
         'scratch'    => 'scratch token',
         'u2f'        => 'U2F security token',
+        'webauthn'   => 'WebAuthn hardware authentication'
     );
 
     /**
@@ -51,7 +53,7 @@ abstract class LoginCredentialPageBase extends InternalPageBase
 
             $database = $this->getDatabase();
             try {
-                list($partialId, $partialStage) = WebRequest::getAuthPartialLogin();
+                list($partialId, $partialStage, $partialToken) = WebRequest::getAuthPartialLogin();
 
                 if ($partialStage === null) {
                     $partialStage = 1;
@@ -153,7 +155,7 @@ abstract class LoginCredentialPageBase extends InternalPageBase
         $this->assign('alternatives', array()); // 'u2f' => array('U2F token'), 'otp' => array('TOTP', 'scratch', 'yubiotp')));
 
         // is this stage one?
-        list($partialId, $partialStage) = WebRequest::getAuthPartialLogin();
+        list($partialId, $partialStage, $partialToken) = WebRequest::getAuthPartialLogin();
         if ($partialStage === null || $partialId === null) {
             WebRequest::clearAuthPartialLogin();
         }
@@ -300,12 +302,16 @@ abstract class LoginCredentialPageBase extends InternalPageBase
         }
 
         $userOptions = array();
-        if (get_called_class() === PageOtpLogin::class) {
-            $userOptions = $this->setupUserOptionsForType($types, 'u2f', $userOptions);
+        if (get_called_class() !== PageOtpLogin::class) {
+            $userOptions = array_merge($userOptions, $this->setupUserOptionsForType($types, 'otp', $userOptions));
         }
 
-        if (get_called_class() === PageU2FLogin::class) {
-            $userOptions = $this->setupUserOptionsForType($types, 'otp', $userOptions);
+        if (get_called_class() !== PageU2FLogin::class) {
+            $userOptions = array_merge($userOptions, $this->setupUserOptionsForType($types, 'u2f', $userOptions));
+        }
+
+        if (get_called_class() !== PageWebAuthnLogin::class) {
+            $userOptions = array_merge($userOptions, $this->setupUserOptionsForType($types, 'webauthn', $userOptions));
         }
 
         $this->assign('alternatives', $userOptions);

@@ -8,7 +8,7 @@
         </div>
     </div>
 
-    <div class="row row-cols-1 row-cols-md-2 row-cols-lg-3 row-cols-xl-4">
+    <div class="row row-cols-1 row-cols-md-2 row-cols-lg-3">
         <div class="col">
             <div class="card mb-4 {if $totpEnrolled}border-success{/if}">
                 <div class="card-body">
@@ -116,6 +116,40 @@
                 </div>
             </div>
         </div>
+
+        <div class="col">
+            <div class="card mb-4 {if $webAuthnEnrolled}border-success{/if}">
+                <div class="card-body">
+                    <h4 class="card-title">WebAuthn</h4>
+                    <p class="card-text lead">
+                        Some blurb about what WebAuthn actually is.
+                    </p>
+                </div>
+                <div class="card-footer">
+                    <p>
+                        <strong>WebAuthn status:</strong>
+                        {if $webAuthnEnrolled}
+                            <span class="badge badge-success">ENABLED</span>
+                        {else}
+                            <span class="badge badge-danger">DISABLED</span>
+                        {/if}
+                    </p>
+
+                    {if $webAuthnEnrolled}
+                        <a class="btn btn-block btn-outline-danger" href="{$baseurl}/internal.php/multiFactor/disableWebAuthn">
+                            <i class="icon-white icon-remove"></i>&nbsp;Disable
+                        </a>
+                    {else}
+                        {if $allowedWebAuthn}
+                            <a class="btn btn-block btn-secondary" href="{$baseurl}/internal.php/multiFactor/enableWebAuthn">
+                                <i class="icon-white icon-ok"></i>&nbsp;Enable
+                            </a>
+                        {/if}
+                    {/if}
+                </div>
+            </div>
+        </div>
+
         <div class="col">
             <div class="card mb-4">
                 <div class="card-body">

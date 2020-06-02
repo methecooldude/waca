@@ -17,6 +17,7 @@ use Waca\Security\CredentialProviders\PasswordCredentialProvider;
 use Waca\Security\CredentialProviders\ScratchTokenCredentialProvider;
 use Waca\Security\CredentialProviders\TotpCredentialProvider;
 use Waca\Security\CredentialProviders\U2FCredentialProvider;
+use Waca\Security\CredentialProviders\WebAuthnCredentialProvider;
 use Waca\Security\CredentialProviders\YubikeyOtpCredentialProvider;
 use Waca\SiteConfiguration;
 
@@ -47,6 +48,7 @@ class AuthenticationManager
         $this->typeMap['totp'] = new TotpCredentialProvider($database, $siteConfiguration);
         $this->typeMap['scratch'] = new ScratchTokenCredentialProvider($database, $siteConfiguration);
         $this->typeMap['u2f'] = new U2FCredentialProvider($database, $siteConfiguration);
+        $this->typeMap['webauthn'] = new WebAuthnCredentialProvider($database, $siteConfiguration);
         $this->database = $database;
     }
 

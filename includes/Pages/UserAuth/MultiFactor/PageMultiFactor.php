@@ -12,6 +12,8 @@ use BaconQrCode\Renderer\Image\SvgImageBackEnd;
 use BaconQrCode\Renderer\ImageRenderer;
 use BaconQrCode\Renderer\RendererStyle\RendererStyle;
 use BaconQrCode\Writer;
+use ParagonIE\ConstantTime\Base32;
+use Throwable;
 use Waca\DataObjects\User;
 use Waca\Exceptions\ApplicationLogicException;
 use Waca\PdoDatabase;
@@ -20,6 +22,7 @@ use Waca\Security\CredentialProviders\PasswordCredentialProvider;
 use Waca\Security\CredentialProviders\ScratchTokenCredentialProvider;
 use Waca\Security\CredentialProviders\TotpCredentialProvider;
 use Waca\Security\CredentialProviders\U2FCredentialProvider;
+use Waca\Security\CredentialProviders\WebAuthnCredentialProvider;
 use Waca\Security\CredentialProviders\YubikeyOtpCredentialProvider;
 use Waca\SessionAlert;
 use Waca\Tasks\InternalPageBase;
@@ -47,6 +50,9 @@ class PageMultiFactor extends InternalPageBase
         $u2fCredentialProvider = new U2FCredentialProvider($database, $this->getSiteConfiguration());
         $this->assign('u2fEnrolled', $u2fCredentialProvider->userIsEnrolled($currentUser->getId()));
 
+        $webauthnCredentialProvider = new WebAuthnCredentialProvider($database, $this->getSiteConfiguration());
+        $this->assign('webAuthnEnrolled', $webauthnCredentialProvider->userIsEnrolled($currentUser->getId()));
+
         $scratchCredentialProvider = new ScratchTokenCredentialProvider($database, $this->getSiteConfiguration());
         $this->assign('scratchEnrolled', $scratchCredentialProvider->userIsEnrolled($currentUser->getId()));
         $this->assign('scratchRemaining', $scratchCredentialProvider->getRemaining($currentUser->getId()));
@@ -54,6 +60,7 @@ class PageMultiFactor extends InternalPageBase
         $this->assign('allowedTotp', $this->barrierTest('enableTotp', $currentUser));
         $this->assign('allowedYubikey', $this->barrierTest('enableYubikeyOtp', $currentUser));
         $this->assign('allowedU2f', $this->barrierTest('enableU2F', $currentUser));
+        $this->assign('allowedWebAuthn', $this->barrierTest('enableWebAuthn', $currentUser));
 
         $this->setTemplate('mfa/mfa.tpl');
     }
@@ -358,6 +365,125 @@ JS
         $otpCredentialProvider = new U2FCredentialProvider($database, $this->getSiteConfiguration());
 
         $factorType = 'U2F';
+
+        $this->deleteCredential($database, $currentUser, $otpCredentialProvider, $factorType);
+    }
+
+    protected function enableWebAuthn() {
+        $database = $this->getDatabase();
+        $currentUser = User::getCurrent($database);
+
+        $credentialProvider = new WebAuthnCredentialProvider($database, $this->getSiteConfiguration());
+
+        if(WebRequest::wasPosted()) {
+            // used for routing only, not security
+            $stage = WebRequest::postString('stage');
+
+            if ($stage === "auth") {
+                $this->validateCSRFToken();
+
+                $password = WebRequest::postString('password');
+
+                $passwordCredentialProvider = new PasswordCredentialProvider($database,
+                    $this->getSiteConfiguration());
+                $result = $passwordCredentialProvider->authenticate($currentUser, $password);
+
+                if ($result) {
+                    $enrollmentToken = Base32::encodeUpper(openssl_random_pseudo_bytes(30));
+                    WebRequest::setSessionContext('webauthn-enroll', $enrollmentToken);
+                    WebRequest::setSessionContext('webauthn-enroll-timeout', time() + 300);
+                    $this->assign('enrollment', $enrollmentToken);
+
+                    $this->addJs('/resources/auth/webauthn-register.js', 'module');
+                    $this->setTemplate('mfa/enableWebAuthnEnroll.tpl');
+
+                    return;
+                }
+                else {
+                    SessionAlert::error('Error enabling WebAuthn - invalid credentials.');
+                    $this->redirect('multiFactor');
+
+                    return;
+                }
+            }
+            else if($stage == "failure") {
+                $this->redirect('multiFactor');
+                return;
+            }
+            else if($stage == "success") {
+                SessionAlert::success('Enabled WebAuthn.');
+
+                $scratchProvider = new ScratchTokenCredentialProvider($database, $this->getSiteConfiguration());
+                if($scratchProvider->getRemaining($currentUser->getId()) < 3) {
+                    $scratchProvider->setCredential($currentUser, 2, null);
+                    $tokens = $scratchProvider->getTokens();
+                    $this->assign('tokens', $tokens);
+                    $this->setTemplate('mfa/regenScratchTokens.tpl');
+                    return;
+                }
+
+                $this->redirect('multiFactor');
+                return;
+            }
+            else {
+                // This is managed by JS, so we need to be careful here.
+                try {
+                    $rawData = file_get_contents("php://input");
+                    $data = json_decode($rawData, true);
+
+                    if (isset($data['enrollment'])) {
+                        $enrollmentToken = WebRequest::getSessionContext('webauthn-enroll');
+                        $enrollmentTokenTimeout = WebRequest::getSessionContext('webauthn-enroll-timeout');
+
+                        if ($enrollmentToken !== $data['enrollment']) {
+                            throw new ApplicationLogicException('Enrollment failed.');
+                        }
+
+                        if ($enrollmentTokenTimeout < time()) {
+                            // timeout, sorry.
+                            throw new ApplicationLogicException('Enrollment failed.');
+                        }
+
+                        $registrationData = $credentialProvider->beginEnrollment($currentUser);
+
+                        $this->headerQueue[] = 'Content-Type: application/json';
+                        $this->assign('content', $registrationData);
+                        $this->setTemplate('raw.tpl');
+
+                        return;
+                    }
+
+                    if (isset($data['id'])) {
+                        $credentialProvider->setCredential($currentUser, 2, $rawData);
+                        $this->assign('content', json_encode(["status"=> "success"]));
+                        $this->setTemplate('raw.tpl');
+                        return;
+                    }
+
+                    throw new ApplicationLogicException('Enrollment failed.');
+                } catch (Throwable $ex) {
+                    SessionAlert::error($ex->getMessage());
+                    throw new ApplicationLogicException("", 0, $ex);
+                }
+            }
+        }
+        else {
+            $this->assignCSRFToken();
+
+            $this->assign('alertmessage', 'To enable your multi-factor credentials, please prove you are who you say you are by providing the information below.');
+            $this->assign('alertheader', 'Provide credentials');
+            $this->assign('continueText', 'Verify password');
+            $this->setTemplate('mfa/enableAuth.tpl');
+        }
+    }
+
+    protected function disableWebAuthn() {
+        $database = $this->getDatabase();
+        $currentUser = User::getCurrent($database);
+
+        $otpCredentialProvider = new WebAuthnCredentialProvider($database, $this->getSiteConfiguration());
+
+        $factorType = 'WebAuthn';
 
         $this->deleteCredential($database, $currentUser, $otpCredentialProvider, $factorType);
     }

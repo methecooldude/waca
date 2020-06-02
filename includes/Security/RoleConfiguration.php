@@ -122,6 +122,9 @@ class RoleConfiguration
                 'disableYubikeyOtp' => self::ACCESS_ALLOW,
                 'enableTotp'        => self::ACCESS_ALLOW,
                 'disableTotp'       => self::ACCESS_ALLOW,
+                // allow a user to disable this even when they're not allowed to enable it
+                'disableU2F'        => self::ACCESS_ALLOW,
+                'disableWebAuthn'   => self::ACCESS_ALLOW,
             ),
             PageOAuth::class          => array(
                 'attach' => self::ACCESS_ALLOW,
@@ -288,7 +291,7 @@ class RoleConfiguration
             ),
             PageMultiFactor::class => array(
                 'enableU2F'         => self::ACCESS_ALLOW,
-                'disableU2F'        => self::ACCESS_ALLOW,
+                'enableWebAuthn'    => self::ACCESS_ALLOW,
             )
         ),
         'botCreation'       => array(

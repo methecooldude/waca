@@ -20,6 +20,7 @@ use Waca\Pages\RequestAction\PageCreateRequest;
 use Waca\Pages\UserAuth\Login\PageOtpLogin;
 use Waca\Pages\UserAuth\Login\PagePasswordLogin;
 use Waca\Pages\UserAuth\Login\PageU2FLogin;
+use Waca\Pages\UserAuth\Login\PageWebAuthnLogin;
 use Waca\Pages\UserAuth\PageChangePassword;
 use Waca\Pages\UserAuth\PageForgotPassword;
 use Waca\Pages\PageLog;
@@ -132,6 +133,11 @@ class RequestRouter implements IRequestRouter
                 'class'   => PageU2FLogin::class,
                 'actions' => array(),
             ),
+        'login/webauthn'                   =>
+            array(
+                'class'   => PageWebAuthnLogin::class,
+                'actions' => array('action', 'options'),
+            ),
         'forgotPassword'              =>
             array(
                 'class'   => PageForgotPassword::class,
@@ -221,6 +227,8 @@ class RequestRouter implements IRequestRouter
                     'disableTotp',
                     'enableU2F',
                     'disableU2F',
+                    'enableWebAuthn',
+                    'disableWebAuthn',
                 ),
             ),
         'oauth'                       =>
