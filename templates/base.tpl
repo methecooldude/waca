@@ -79,7 +79,7 @@
 
     <!-- Page-specific extra resources -->
     {foreach from=$extraJs item=js}
-        <script src="{$baseurl}{$js}" type="text/javascript"></script>
+        <script src="{$baseurl}{$js.path|escape}" type="{$js.type|escape}" integrity="sha256-{$js.integrity}"></script>
     {/foreach}
 
     {if $tailScript}
