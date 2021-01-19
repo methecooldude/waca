@@ -9,7 +9,6 @@
 namespace Waca\Pages\UserAuth\Login;
 
 use Waca\Exceptions\ApplicationLogicException;
-use Waca\Security\CredentialProviders\U2FCredentialProvider;
 use Waca\Security\CredentialProviders\WebAuthn\PublicKeyCredentialUserEntity;
 use Waca\Security\CredentialProviders\WebAuthnCredentialProvider;
 use Waca\WebRequest;
