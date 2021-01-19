@@ -48,6 +48,7 @@ class PageMultiFactor extends InternalPageBase
 
         $webauthnCredentialProvider = new WebAuthnCredentialProvider($database, $this->getSiteConfiguration());
         $this->assign('webAuthnEnrolled', $webauthnCredentialProvider->userIsEnrolled($currentUser->getId()));
+        $this->assign('webAuthnTokens', $webauthnCredentialProvider->listEnrolledTokens($currentUser->getId()));
 
         $scratchCredentialProvider = new ScratchTokenCredentialProvider($database, $this->getSiteConfiguration());
         $this->assign('scratchEnrolled', $scratchCredentialProvider->userIsEnrolled($currentUser->getId()));
@@ -308,6 +309,8 @@ class PageMultiFactor extends InternalPageBase
                         $enrollmentToken = WebRequest::getSessionContext('webauthn-enroll');
                         $enrollmentTokenTimeout = WebRequest::getSessionContext('webauthn-enroll-timeout');
 
+                        WebRequest::setSessionContext('webauthn-enroll-tokenname', $data['tokenName']);
+
                         if ($enrollmentToken !== $data['enrollment']) {
                             throw new ApplicationLogicException('Enrollment failed.');
                         }
@@ -351,14 +354,46 @@ class PageMultiFactor extends InternalPageBase
     }
 
     protected function disableWebAuthn() {
+        if(!WebRequest::wasPosted()) {
+            $this->redirect('multiFactor');
+        }
+
         $database = $this->getDatabase();
         $currentUser = User::getCurrent($database);
 
         $otpCredentialProvider = new WebAuthnCredentialProvider($database, $this->getSiteConfiguration());
 
-        $factorType = 'WebAuthn';
+        if (!$otpCredentialProvider->userIsEnrolled($currentUser->getId())) {
+            // user is not enrolled, we shouldn't have got here.
+            throw new ApplicationLogicException('User is not enrolled in the selected MFA mechanism');
+        }
 
-        $this->deleteCredential($database, $currentUser, $otpCredentialProvider, $factorType);
+        if(WebRequest::postString("password") === null) {
+            $this->assignCSRFToken();
+            $this->assign('otpType', "WebAuthn authenticator");
+            $this->assign('identifier', WebRequest::postString('publicKeyId'));
+            $this->setTemplate('mfa/disableOtp.tpl');
+        } else {
+            $passwordCredentialProvider = new PasswordCredentialProvider($database,
+                $this->getSiteConfiguration());
+
+            $this->validateCSRFToken();
+
+            $password = WebRequest::postString('password');
+            $publicKeyId = WebRequest::postString('identifier');
+            $result = $passwordCredentialProvider->authenticate($currentUser, $password);
+
+            if ($result) {
+                $otpCredentialProvider->deleteToken($currentUser, $publicKeyId);
+                SessionAlert::success('Disabled WebAuthn authenticator.');
+                $this->redirect('multiFactor');
+            }
+            else {
+                SessionAlert::error('Error disabling WebAuthn authenticator - invalid credentials.');
+                $this->redirect('multiFactor');
+            }
+
+        }
     }
 
     protected function scratch()

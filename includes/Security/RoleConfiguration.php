@@ -120,6 +120,7 @@ class RoleConfiguration
                 'scratch'           => self::ACCESS_ALLOW,
                 'enableYubikeyOtp'  => self::ACCESS_ALLOW,
                 'enableTotp'        => self::ACCESS_ALLOW,
+                'enableWebAuthn'    => self::ACCESS_ALLOW,
                 // allow a user to disable this even when they're not allowed to enable it
                 'disableYubikeyOtp' => self::ACCESS_ALLOW,
                 'disableTotp'       => self::ACCESS_ALLOW,
@@ -288,9 +289,6 @@ class RoleConfiguration
             'BanType'                   => array(
                 'ip-largerange' => self::ACCESS_ALLOW,
             ),
-            PageMultiFactor::class => array(
-                'enableWebAuthn'    => self::ACCESS_ALLOW,
-            )
         ),
         'botCreation'       => array(
             '_description'    => 'A user allowed to use the bot to perform account creations',

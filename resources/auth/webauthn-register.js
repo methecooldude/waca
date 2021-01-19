@@ -43,8 +43,9 @@ const register = useRegistration({
 
 const doRegistration = () => {
     var enrollment = document.querySelector('input[name=enrollment]').value;
+    var tokenName = document.querySelector('input[name=authenticatorName]').value;
 
-    register({enrollment: enrollment})
+    register({enrollment: enrollment, tokenName: tokenName})
         .then((response) => {
             console.log('Registration success')
             post(window.location, {"stage": "success"});

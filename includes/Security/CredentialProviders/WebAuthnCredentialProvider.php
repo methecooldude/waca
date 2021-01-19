@@ -33,14 +33,13 @@ class WebAuthnCredentialProvider extends CredentialProviderBase implements Publi
     private $server;
     /** @var EncryptionHelper */
     private $encryptionHelper;
-
     /** @var User */
     private $partialLoginUser;
 
     /**
      * WebAuthnCredentialProvider constructor.
      *
-     * @param PdoDatabase       $database
+     * @param PdoDatabase $database
      * @param SiteConfiguration $configuration
      */
     public function __construct(PdoDatabase $database, SiteConfiguration $configuration)
@@ -49,24 +48,63 @@ class WebAuthnCredentialProvider extends CredentialProviderBase implements Publi
         $this->encryptionHelper = new EncryptionHelper($configuration);
 
         $rpEntity = new PublicKeyCredentialRpEntity(
-            'English Wikipedia Account Creation Tool (' . $this->getConfiguration()->getIrcNotificationsInstance() . ')',
+            'English Wikipedia Account Creation Tool (' . $this->getConfiguration()
+                ->getIrcNotificationsInstance() . ')',
             parse_url($this->getConfiguration()->getBaseUrl())['host']
         );
 
         $this->server = new Server($rpEntity, $this, null);
     }
 
+    public function listEnrolledTokens(int $userId): array
+    {
+        if (!$this->userIsEnrolled($userId)) {
+            return [];
+        }
+
+        $credential = $this->getCredentialData($userId, null);
+        $credentialData = unserialize($this->encryptionHelper->decryptData($credential->getData()))['tokenMetadata'];
+
+        return $credentialData;
+    }
+
+    public function deleteToken(User $user, string $publicKeyId): void
+    {
+        $credential = $this->getCredentialData($user->getId(), null);
+        $credentialData = unserialize($this->encryptionHelper->decryptData($credential->getData()));
+
+        if (isset($credentialData['tokenMetadata'][$publicKeyId])) {
+            unset($credentialData['tokenMetadata'][$publicKeyId]);
+        }
+        if (isset($credentialData['tokens'][$publicKeyId])) {
+            unset($credentialData['tokens'][$publicKeyId]);
+        }
+
+        if (count($credentialData['tokenMetadata']) != count($credentialData['tokens'])) {
+            // something has gone horribly wrong.
+            throw new ApplicationLogicException("Mismatch between registered tokens and metadata");
+        }
+
+        if (count($credentialData['token']) == 0) {
+            $this->deleteCredential($user);
+        }
+        else {
+            $credential->setData($this->encryptionHelper->encryptData(serialize($credentialData)));
+            $credential->save();
+        }
+    }
+
     // from Waca\Security\CredentialProviders\ICredentialProvider
     public function authenticate(User $user, $data)
     {
-        if($data === "/+") {
+        if ($data === "/+") {
             return false;
         }
 
-        [,,$partialToken] = WebRequest::getAuthPartialLogin();
+        [, , $partialToken] = WebRequest::getAuthPartialLogin();
         WebRequest::setAuthPartialLoginToken('');
 
-        if($data === $partialToken) {
+        if ($data === $partialToken) {
             return true;
         }
 
@@ -90,17 +128,27 @@ class WebAuthnCredentialProvider extends CredentialProviderBase implements Publi
             $publicKeyCredentialSource = $this->server->loadAndCheckAttestationResponse(
                 $data, $creationOptions, $serverRequest);
 
-            $currentUser = $user;
-            $credential = $this->getCredentialData($currentUser->getId(), null);
+            $credential = $this->getCredentialData($user->getId(), null);
 
             if ($credential === null) {
-                $credential = $this->createNewCredential($currentUser);
+                $credential = $this->createNewCredential($user);
                 $credential->setFactor($factor);
-                $credential->setPriority(5);
+                $credential->setPriority(4);
                 $credential->setVersion(1);
-                $credential->setData($this->encryptionHelper->encryptData(serialize([])));
-                $credential->save();
+                $credential->setData($this->encryptionHelper->encryptData(serialize([
+                    'tokenMetadata' => [],
+                    'tokens'        => [],
+                ])));
             }
+
+            // save the token metadata first; this isn't (and can't be) managed by the webauthn library calls
+            $credentialData = unserialize($this->encryptionHelper->decryptData($credential->getData()));
+            $credentialData['tokenMetadata'][base64_encode($publicKeyCredentialSource->getPublicKeyCredentialId())] = [
+                'publicKeyId' => base64_encode($publicKeyCredentialSource->getPublicKeyCredentialId()),
+                'tokenName'   => WebRequest::getSessionContext('webauthn-enroll-tokenname'),
+            ];
+            $credential->setData($this->encryptionHelper->encryptData(serialize($credentialData)));
+            $credential->save();
 
             $this->saveCredentialSource($publicKeyCredentialSource);
         }
@@ -116,10 +164,14 @@ class WebAuthnCredentialProvider extends CredentialProviderBase implements Publi
      *
      * @return false|string
      */
-    public function beginEnrollment(User $user) {
+    public function beginEnrollment(User $user)
+    {
         $userEntity = new PublicKeyCredentialUserEntity($user);
 
-        $excludeCredentials = [];
+        $credentialSources = $this->findAllForUserEntity($userEntity);
+        $excludeCredentials = array_map(function(PublicKeyCredentialSource $credential) {
+            return $credential->getPublicKeyCredentialDescriptor();
+        }, $credentialSources);
 
         $publicKeyCredentialCreationOptions = $this->server->generatePublicKeyCredentialCreationOptions(
             $userEntity,
@@ -132,11 +184,12 @@ class WebAuthnCredentialProvider extends CredentialProviderBase implements Publi
         return json_encode($publicKeyCredentialCreationOptions);
     }
 
-    public function beginAuthentication(User $user) {
+    public function beginAuthentication(User $user)
+    {
         $userEntity = new PublicKeyCredentialUserEntity($user);
         $credentialSources = $this->findAllForUserEntity($userEntity);
 
-        $allowedCredentials = array_map(function (PublicKeyCredentialSource $credential) {
+        $allowedCredentials = array_map(function(PublicKeyCredentialSource $credential) {
             return $credential->getPublicKeyCredentialDescriptor();
         }, $credentialSources);
 
@@ -166,6 +219,13 @@ class WebAuthnCredentialProvider extends CredentialProviderBase implements Publi
 
             $token = Base32::encodeUpper(openssl_random_pseudo_bytes(30));
             WebRequest::setAuthPartialLoginToken($token);
+
+            $credential = $this->getCredentialData($user->getId(), null);
+            $credentialData = unserialize($this->encryptionHelper->decryptData($credential->getData()));
+            $credentialData['tokenMetadata'][base64_encode($publicKeyCredentialSource->getPublicKeyCredentialId())]['lastUsed'] = time();
+            $credential->setData($this->encryptionHelper->encryptData(serialize($credentialData)));
+            $credential->save();
+
             return ['token' => $token, 'source' => $publicKeyCredentialSource];
         }
         catch (Throwable $exception) {
@@ -176,6 +236,7 @@ class WebAuthnCredentialProvider extends CredentialProviderBase implements Publi
     /**
      *
      * from Webauthn\PublicKeyCredentialSourceRepository
+     *
      * @param string $publicKeyCredentialId
      *
      * @return PublicKeyCredentialSource|null
@@ -186,7 +247,7 @@ class WebAuthnCredentialProvider extends CredentialProviderBase implements Publi
 
         $credential = $this->getCredentialData($currentUser->getId(), null);
 
-        if($currentUser->isCommunityUser() && $this->partialLoginUser !== null) {
+        if ($currentUser->isCommunityUser() && $this->partialLoginUser !== null) {
             // We're in the middle of a login, so use the partial-login user instead.
             $credential = $this->getCredentialData($this->partialLoginUser->getId(), null);
         }
@@ -195,9 +256,9 @@ class WebAuthnCredentialProvider extends CredentialProviderBase implements Publi
             return null;
         }
 
-        $credentialData = unserialize($this->encryptionHelper->decryptData($credential->getData()));
+        $credentialData = unserialize($this->encryptionHelper->decryptData($credential->getData()))['tokens'];
 
-        if(isset($credentialData[base64_encode($publicKeyCredentialId)])){
+        if (isset($credentialData[base64_encode($publicKeyCredentialId)])) {
             return $credentialData[base64_encode($publicKeyCredentialId)];
         }
 
@@ -208,6 +269,7 @@ class WebAuthnCredentialProvider extends CredentialProviderBase implements Publi
      * Gets all WebAuthn registrations for the supplied user
      *
      * from Webauthn\PublicKeyCredentialSourceRepository
+     *
      * @param WebAuthnPublicKeyCredentialUserEntity $userEntity
      *
      * @return array
@@ -221,7 +283,7 @@ class WebAuthnCredentialProvider extends CredentialProviderBase implements Publi
             return [];
         }
 
-        return unserialize($this->encryptionHelper->decryptData($credential->getData()));
+        return unserialize($this->encryptionHelper->decryptData($credential->getData()))['tokens'];
     }
 
     // from Webauthn\PublicKeyCredentialSourceRepository
@@ -234,11 +296,10 @@ class WebAuthnCredentialProvider extends CredentialProviderBase implements Publi
         }
 
         $credentialData = unserialize($this->encryptionHelper->decryptData($credential->getData()));
-        $credentialData[base64_encode($publicKeyCredentialSource->getPublicKeyCredentialId())] = $publicKeyCredentialSource;
+        $credentialData['tokens'][base64_encode($publicKeyCredentialSource->getPublicKeyCredentialId())] = $publicKeyCredentialSource;
 
         $credential->setData($this->encryptionHelper->encryptData(serialize($credentialData)));
         $credential->setDisabled(0);
         $credential->save();
     }
-
 }
