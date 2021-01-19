@@ -81,12 +81,6 @@
     {foreach from=$extraJs item=js}
         <script src="{$baseurl}{$js.path|escape}" type="{$js.type|escape}" integrity="sha256-{$js.integrity}"></script>
     {/foreach}
-
-    {if $tailScript}
-        <script type="text/javascript" nonce="{$tailScriptNonce}">
-            {$tailScript}
-        </script>
-    {/if}
 {/block}
 </body>
 </html>
